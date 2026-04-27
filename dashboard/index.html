@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MarketPulse Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 1.5rem 2rem;
+      border-bottom: 1px solid #1e2433;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    header h1 { font-size: 1.4rem; font-weight: 600; color: #fff; }
+    header h1 span { color: #3b82f6; }
+    #last-updated { font-size: 12px; color: #64748b; }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+
+    /* ── Live price cards ── */
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem; }
+
+    .card {
+      background: #1a1f2e;
+      border: 1px solid #1e2433;
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .card .coin-name { font-size: 13px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+    .card .price { font-size: 2rem; font-weight: 700; color: #fff; margin: 0.4rem 0; }
+    .card .change { font-size: 14px; font-weight: 500; }
+    .card .change.up   { color: #22c55e; }
+    .card .change.down { color: #ef4444; }
+
+    /* ── Chart section ── */
+    .chart-section {
+      background: #1a1f2e;
+      border: 1px solid #1e2433;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.2rem;
+    }
+
+    .section-title { font-size: 1rem; font-weight: 600; color: #fff; }
+
+    .coin-tabs { display: flex; gap: 8px; }
+    .coin-tab {
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      cursor: pointer;
+      border: 1px solid #2d3748;
+      background: transparent;
+      color: #94a3b8;
+      transition: all .15s;
+    }
+    .coin-tab.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+
+    /* ── News section ── */
+    .news-section {
+      background: #1a1f2e;
+      border: 1px solid #1e2433;
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .news-item {
+      padding: 1rem 0;
+      border-bottom: 1px solid #1e2433;
+    }
+    .news-item:last-child { border-bottom: none; }
+
+    .news-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: #e2e8f0;
+      text-decoration: none;
+      line-height: 1.5;
+    }
+    .news-title:hover { color: #3b82f6; }
+
+    .news-meta {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 4px;
+    }
+
+    .loading { color: #64748b; font-size: 14px; padding: 1rem 0; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Market<span>Pulse</span></h1>
+  <div id="last-updated">Loading...</div>
+</header>
+
+<div class="container">
+
+  <!-- Live price cards -->
+  <div class="cards" id="cards">
+    <div class="card"><div class="loading">Loading prices...</div></div>
+    <div class="card"><div class="loading">Loading prices...</div></div>
+    <div class="card"><div class="loading">Loading prices...</div></div>
+  </div>
+
+  <!-- Price history chart -->
+  <div class="chart-section">
+    <div class="section-header">
+      <div class="section-title">Price History</div>
+      <div class="coin-tabs" id="coin-tabs"></div>
+    </div>
+    <canvas id="priceChart" height="80"></canvas>
+  </div>
+
+  <!-- News headlines -->
+  <div class="news-section">
+    <div class="section-header">
+      <div class="section-title">Latest Crypto News</div>
+    </div>
+    <div id="news-list"><div class="loading">Loading news...</div></div>
+  </div>
+
+</div>
+<script>
+const COLORS = {
+  bitcoin:  '#f7931a',
+  ethereum: '#627eea',
+  solana:   '#9945ff'
+}
+
+let historyData = {}
+let chart = null
+let activeCoin = 'bitcoin'
+
+// ── Fetch and render live prices ──────────
+async function loadLive() {
+  const res = await fetch('/api/live')
+  const data = await res.json()
+
+  const container = document.getElementById('cards')
+  container.innerHTML = data.map(d => {
+    const up = d.change_24h >= 0
+    const arrow = up ? '▲' : '▼'
+    const cls = up ? 'up' : 'down'
+    const price = d.price.toLocaleString('en-US', {
+      style: 'currency', currency: 'USD'
+    })
+    const change = Math.abs(d.change_24h).toFixed(2)
+    return `
+      <div class="card">
+        <div class="coin-name">${d.coin}</div>
+        <div class="price">${price}</div>
+        <div class="change ${cls}">${arrow} ${change}% (24h)</div>
+      </div>`
+  }).join('')
+
+  const ts = data[0]?.fetched_at?.slice(0, 19).replace('T', ' ')
+  document.getElementById('last-updated').textContent =
+    `Last updated: ${ts} UTC`
+}
+
+// ── Fetch history and render chart ────────
+async function loadHistory() {
+  const res = await fetch('/api/history')
+  historyData = await res.json()
+
+  // Build coin tabs
+  const tabs = document.getElementById('coin-tabs')
+  tabs.innerHTML = Object.keys(historyData).map(coin => `
+    <button class="coin-tab ${coin === activeCoin ? 'active' : ''}"
+      onclick="switchCoin('${coin}')">${coin}</button>
+  `).join('')
+
+  renderChart(activeCoin)
+}
+
+function switchCoin(coin) {
+  activeCoin = coin
+  document.querySelectorAll('.coin-tab').forEach(t => {
+    t.classList.toggle('active', t.textContent === coin)
+  })
+  renderChart(coin)
+}
+
+function renderChart(coin) {
+  const d = historyData[coin]
+  if (!d) return
+
+  const ctx = document.getElementById('priceChart').getContext('2d')
+  const color = COLORS[coin] || '#3b82f6'
+
+  if (chart) chart.destroy()
+
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: d.dates,
+      datasets: [{
+        label: coin,
+        data: d.prices,
+        borderColor: color,
+        backgroundColor: color + '18',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        fill: true,
+        tension: 0.3,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => '$' + ctx.raw?.toLocaleString()
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#64748b', maxTicksLimit: 8 },
+          grid:  { color: '#1e2433' }
+        },
+        y: {
+          ticks: {
+            color: '#64748b',
+            callback: v => '$' + v.toLocaleString()
+          },
+          grid: { color: '#1e2433' }
+        }
+      }
+    }
+  })
+}
+
+// ── Fetch and render news ──────────────────
+async function loadNews() {
+  const res = await fetch('/api/news')
+  const articles = await res.json()
+
+  document.getElementById('news-list').innerHTML =
+    articles.map(a => {
+      const date = a.published?.slice(0, 16).replace('T', ' ') || ''
+      return `
+        <div class="news-item">
+          <a class="news-title" href="${a.link}" target="_blank">${a.title}</a>
+          <div class="news-meta">${a.authors} &nbsp;·&nbsp; ${date}</div>
+        </div>`
+    }).join('')
+}
+
+// ── Load everything on page open ──────────
+loadLive()
+loadHistory()
+loadNews()
+// Auto-refresh live prices every 60 seconds
+setInterval(() => {
+    loadLive()
+}, 60000)
+</script>
+
+</body>
+</html>
