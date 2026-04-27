@@ -1,7 +1,6 @@
-data/
 logs/
 __pycache__/
 *.pyc
 .DS_Store
 *.db
-*.json
+data/raw_*.json
