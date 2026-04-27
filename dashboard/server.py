@@ -66,25 +66,57 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         ]
 
     def get_history(self):
-        """Last 365 days of closing prices per coin."""
+        """Combine CSV history + live API snapshots into one chart"""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
+
+        # Get CSV historical data
         cursor.execute("""
             SELECT coin, date, close
             FROM prices_history
             ORDER BY coin, date
         """)
-        rows = cursor.fetchall()
+        history_rows = cursor.fetchall()
+
+        # Get live API snapshots
+        cursor.execute("""
+            SELECT coin, 
+                DATE(fetched_at) as date,
+                AVG(price) as close
+            FROM prices_live
+            GROUP BY coin, DATE(fetched_at)
+            ORDER BY coin, date
+        """)
+        live_rows = cursor.fetchall()
+
         conn.close()
-        # Group by coin for the chart
+
+        # ─────────────────────────────────────────
+        # WHY combine both?
+        # CSV gives us 2013-2021 daily closes.
+        # Live API gives us 2021-today daily closes.
+        # Together = complete unbroken price history.
+        # ─────────────────────────────────────────
         result = {}
-        for coin, date, close in rows:
+
+        # Add CSV history first
+        for coin, date, close in history_rows:
             if coin not in result:
                 result[coin] = {'dates': [], 'prices': []}
-            result[coin]['dates'].append(date[:10])
-            result[coin]['prices'].append(close)
-        return result
+            if close is not None:
+                result[coin]['dates'].append(str(date)[:10])
+                result[coin]['prices'].append(close)
 
+        # Add live data on top — fills the gap from 2021 to today
+        for coin, date, close in live_rows:
+            if coin not in result:
+                result[coin] = {'dates': [], 'prices': []}
+            if close is not None:
+                result[coin]['dates'].append(str(date)[:10])
+                result[coin]['prices'].append(round(close, 2))
+
+        return result 
+    
     def get_news(self):
         """Latest 10 relevant news articles."""
         conn = sqlite3.connect(DB_PATH)
