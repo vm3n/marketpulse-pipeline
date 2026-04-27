@@ -29,12 +29,22 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/news':
             self.serve_json(self.get_news())
+        elif self.path == '/api/debug':
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT coin, COUNT(*), MIN(fetched_at), MAX(fetched_at) FROM prices_live GROUP BY coin")
+            live = cursor.fetchall()
+            cursor.execute("SELECT coin, COUNT(*), MIN(date), MAX(date) FROM prices_history GROUP BY coin")
+            hist = cursor.fetchall()
+            conn.close()
+            self.serve_json({'live': live, 'history': hist})
 
         else:
             # Serve static files (index.html etc.)
             # Change directory to dashboard/ so HTML is found
             os.chdir(os.path.dirname(os.path.abspath(__file__)))
             super().do_GET()
+        
 
     def serve_json(self, data):
         """Send data back as JSON with correct headers."""
