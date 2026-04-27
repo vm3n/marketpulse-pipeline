@@ -1,168 +1,160 @@
-# MarketPulse Pipeline 📈
+# MarketPulse Pipeline
 
-A production-structured data pipeline that tracks Bitcoin, Ethereum, and Solana
-across live prices, 8 years of historical data, and real-time news headlines.
+A live data pipeline that tracks Bitcoin, Ethereum, and Solana — combining 8 years of historical data with real-time prices and crypto news, served on a live dashboard.
 
-Built to demonstrate end-to-end data engineering skills — ingestion, transformation,
-storage, orchestration, and serving.
+🔗 **Live Dashboard:** https://marketpulse-pipeline-production.up.railway.app
 
 ---
 
 ## What it does
 
-Every hour, automatically:
+Every time the pipeline runs it:
 1. Fetches live crypto prices from the CoinGecko API
 2. Scrapes the latest news headlines from CoinDesk RSS
-3. Cleans and transforms all data
-4. Stores everything in a SQLite database
-5. Serves a live dashboard at localhost:8081
+3. Loads and processes historical price data from CSV files
+4. Cleans and transforms all data
+5. Stores everything in a SQLite database
+6. Serves it all on a live dashboard with auto-refresh
 
 ---
 
 ## Architecture
 
 ```
-Data Sources          Ingest              Transform           Store               Serve
-────────────          ──────              ─────────           ─────               ─────
-CoinGecko API    →  api_ingest.py   →   clean_api()    →   prices_live    →   dashboard
-CSV (Kaggle)     →  csv_ingest.py   →   clean_csv()    →   prices_history     (Chart.js)
-CoinDesk RSS     →  scraper.py      →   to_dataframe() →   news
-                                                                ↑
-                                                        marketpulse.db
-                                                          (SQLite)
+Data Sources           Ingest               Transform          Store
+────────────           ──────               ─────────          ─────
+CoinGecko API    →   api_ingest.py    →   clean_api()    →   prices_live
+CSV (Kaggle)     →   csv_ingest.py    →   clean_csv()    →   prices_history
+CoinDesk RSS     →   scraper.py       →   to_dataframe() →   news
+                                                               ↓
+                                                         marketpulse.db
+                                                               ↓
+                                                         dashboard/
+                                                         server.py + index.html
 ```
 
-Orchestrated by `run_pipeline.py` — one command runs the entire pipeline.
-Scheduled via cron to run every hour automatically.
-
 ---
 
-## Skills demonstrated
-
-| Skill | How it's used |
-|---|---|
-| REST API ingestion | CoinGecko API with error handling, rate limit awareness |
-| CSV processing | Loading and unifying 3 historical datasets (5,603 rows) |
-| Web scraping | CoinDesk RSS parsed with Python's built-in XML parser |
-| Data cleaning | Type conversion, NaN handling, deduplication, normalization |
-| SQL & SQLite | Schema design, UNIQUE constraints, INSERT OR IGNORE |
-| Idempotency | Pipeline safe to re-run — never creates duplicate rows |
-| Orchestration | cron scheduler with full logging to logs/pipeline.log |
-| Python best practices | Separation of concerns, defensive programming, modular design |
-| Data serving | Lightweight HTTP server with JSON API endpoints |
-| Visualization | Chart.js dashboard with live price cards and history charts |
-
----
-
-## Project structure
+## Project Structure
 
 ```
 marketpulse_pipeline/
 ├── ingest/
 │   ├── api_ingest.py      # Fetches live prices from CoinGecko API
-│   ├── csv_ingest.py      # Loads historical CSV data for 3 coins
-│   └── scraper.py         # Scrapes news headlines from CoinDesk RSS
+│   ├── csv_ingest.py      # Loads 3 historical CSV files, stacks into one DataFrame
+│   └── scraper.py         # Scrapes CoinDesk RSS feed for news headlines
 ├── transform/
-│   └── clean.py           # Cleans and normalizes all data sources
+│   └── clean.py           # Fixes data quality issues across all sources
 ├── store/
-│   └── db.py              # SQLite schema, inserts, queries
+│   └── db.py              # SQLite schema, inserts, idempotent writes
 ├── dashboard/
-│   ├── index.html         # Live dashboard (Chart.js)
-│   └── server.py          # Lightweight HTTP + JSON API server
-├── data/                  # Raw JSON snapshots + SQLite database
-├── logs/                  # Pipeline run logs
-├── run_pipeline.py        # Master controller — runs the full pipeline
-└── requirements.txt       # Python dependencies
+│   ├── index.html         # Live dashboard — price cards, chart, news
+│   └── server.py          # HTTP server with JSON API endpoints
+├── data/
+│   ├── coin_Bitcoin.csv   # Historical daily prices 2013-2021
+│   ├── coin_Ethereum.csv  # Historical daily prices 2015-2021
+│   └── coin_Solana.csv    # Historical daily prices 2020-2021
+├── start.sh               # Railway startup — runs pipeline then server
+├── run_pipeline.py        # Master controller — orchestrates all steps
+└── requirements.txt
 ```
 
 ---
 
-## Database schema
+## Three Data Sources
 
-**prices_history** — 5,603 rows of daily OHLCV data (2013–2021)
-```sql
+### 1. Public API — CoinGecko
+Fetches live BTC, ETH, SOL prices including market cap, 24h volume, and 24h price change. Uses Python `requests` library. Handles rate limits and network errors with try/except.
+
+### 2. CSV Files — Kaggle Historical Data
+Three CSV files with daily OHLCV data from 2013 to 2021. Loaded with pandas, stacked into one unified DataFrame, and cleaned before storing.
+
+### 3. Web Scraping — CoinDesk RSS
+Parses the CoinDesk RSS feed using Python's built-in `xml.etree.ElementTree`. Extracts headlines, authors, publish dates, and article links. Flags articles as crypto-relevant based on keyword matching.
+
+---
+
+## Data Quality
+
+Every raw data source had problems that needed fixing before storing:
+
+| Problem | Source | Fix |
+|---|---|---|
+| Date stored as string | CSV | Converted to datetime64 with pd.to_datetime() |
+| 242 zero-volume rows | CSV | Replaced with NaN — honest representation of missing data |
+| Redundant columns (SNo, Name, Symbol) | CSV | Dropped — reduced from 11 to 8 columns |
+| Nested JSON structure | API | Flattened into rows, one per coin |
+| Duplicate rows on re-run | All | UNIQUE constraints + INSERT OR IGNORE |
+
+---
+
+## Database
+
+**prices_history** — 5,603 rows of daily closing prices (2013–2021)
+```
 coin | date | open | high | low | close | volume | marketcap
 ```
 
-**prices_live** — live price snapshots, one row per coin per pipeline run
-```sql
+**prices_live** — live price snapshots, grows with every pipeline run
+```
 coin | price | market_cap | volume_24h | change_24h | fetched_at
 ```
 
-**news** — scraped headlines with relevance flagging
-```sql
-title | link | published | description | authors | categories | is_relevant | scraped_at
+**news** — scraped headlines
+```
+title | link | published | authors | categories | is_relevant | scraped_at
 ```
 
 ---
 
-## Data quality decisions
+## Key Engineering Concepts
 
-| Problem found | Fix applied |
-|---|---|
-| Date column stored as string | Converted to datetime64 with pd.to_datetime() |
-| 242 zero-volume rows in Bitcoin CSV | Replaced with NaN — honest representation of missing data |
-| Redundant columns (SNo, Name, Symbol) | Dropped — reduced from 11 to 8 columns |
-| Nested JSON from API | Flattened into rows with coin as a column |
-| Duplicate rows on pipeline re-run | UNIQUE constraints + INSERT OR IGNORE |
+**Idempotency** — the pipeline can re-run any number of times without creating duplicate data. UNIQUE constraints on `coin+date` and article `link` ensure every run is safe.
+
+**Separation of concerns** — each module has one job. Ingest fetches, transform cleans, store writes, serve reads. Changing one module never breaks another.
+
+**Defensive programming** — every API call is wrapped in try/except. Every field uses `.get()` with a default. The pipeline never crashes silently.
+
+**Raw store pattern** — raw JSON and scraped data are saved to disk before transformation. If transform logic has a bug, data can be reprocessed without hitting the API again.
 
 ---
 
-## How to run
+## How to Run Locally
 
-**Install dependencies:**
 ```bash
+# Install dependencies
 pip install requests pandas beautifulsoup4
-```
 
-**Run the pipeline once:**
-```bash
+# Run the pipeline
 python run_pipeline.py
-```
 
-**Start the dashboard:**
-```bash
+# Start the dashboard
 python dashboard/server.py
 # Open http://localhost:8081
 ```
 
-**Schedule to run every hour (cron):**
-```bash
-crontab -e
-# Add this line:
-0 * * * * cd /path/to/marketpulse_pipeline && python run_pipeline.py >> logs/pipeline.log 2>&1
-```
+---
+
+## Deployment
+
+Deployed on **Railway** — pipeline runs on startup, dashboard serves live data.
+
+To deploy your own copy:
+1. Fork this repo
+2. Connect to Railway
+3. Set start command: `bash start.sh`
+4. Railway auto-deploys on every push
 
 ---
 
-## Data sources
+## Data Sources
 
-| Source | Type | What it provides |
+| Source | Type | Data |
 |---|---|---|
-| [CoinGecko API](https://www.coingecko.com/en/api) | REST API | Live prices, market cap, 24h volume and change |
-| [Kaggle — Crypto History](https://www.kaggle.com/datasets/sudalairajkumar/cryptocurrencypricehistory) | CSV | Daily OHLCV data from 2013–2021 |
-| [CoinDesk RSS](https://www.coindesk.com/arc/outboundfeeds/rss/) | RSS/XML | Latest crypto news headlines |
+| [CoinGecko API](https://www.coingecko.com/en/api) | REST API | Live prices, market cap, 24h change |
+| [Kaggle](https://www.kaggle.com/datasets/sudalairajkumar/cryptocurrencypricehistory) | CSV | Daily OHLCV 2013–2021 |
+| [CoinDesk RSS](https://www.coindesk.com/arc/outboundfeeds/rss/) | RSS/XML | Latest crypto news |
 
 ---
 
-## Key concepts learned
-
-**Idempotency** — the pipeline can be re-run any number of times without
-creating duplicate data. UNIQUE constraints on coin+date and article URL
-ensure every run is safe.
-
-**Separation of concerns** — each module has one job. Ingest fetches,
-transform cleans, store writes, serve reads. If the API changes, only
-api_ingest.py needs to change.
-
-**Defensive programming** — every network call is wrapped in try/except.
-Every field access uses .get() with a default. The pipeline never crashes
-silently.
-
-**Raw store pattern** — raw API responses and scraped data are saved to
-disk before transformation. If transform logic has a bug, data can be
-re-processed without hitting the API again.
-
----
-
-Built with Python 3.11 · pandas · SQLite · Chart.js · cron
+Built with Python 3.11 · pandas · SQLite · Chart.js · Railway
