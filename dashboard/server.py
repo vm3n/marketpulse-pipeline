@@ -110,7 +110,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = 8081
+    import os
+    port = int(os.environ.get('PORT', 8081))
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     print(f"[DASHBOARD] Server running at http://localhost:{port}")
     print(f"[DASHBOARD] Open that URL in your browser")
